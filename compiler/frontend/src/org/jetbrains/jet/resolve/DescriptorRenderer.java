@@ -90,6 +90,26 @@ public class DescriptorRenderer implements Renderer<DeclarationDescriptor> {
         if (type == null) {
             return escape("[NULL]");
         } else {
+            if (JetStandardClasses.isFunctionType(type)) {
+                StringBuilder result = new StringBuilder();
+                JetType receiverType = JetStandardClasses.getReceiverType(type);
+                if (receiverType != null) {
+                    result.append(renderType(receiverType));
+                    result.append(".");
+                }
+                result.append("(");
+                List<JetType> parameterTypes = JetStandardClasses.getParameterTypesFromFunctionType(type);
+                for (int i = 0; i < parameterTypes.size(); i++) {
+                    if (i != 0) {
+                        result.append(", ");
+                    }
+                    result.append(renderType(parameterTypes.get(i)));
+                }
+                result.append(")-> ");
+                result.append(renderType(JetStandardClasses.getReturnTypeFromFunctionType(type)));
+
+                return result.toString();
+            }
             return escape(type.toString());
         }
     }
@@ -226,7 +246,9 @@ public class DescriptorRenderer implements Renderer<DeclarationDescriptor> {
         public Void visitFunctionDescriptor(FunctionDescriptor descriptor, StringBuilder builder) {
             renderModality(descriptor.getModality(), builder);
             builder.append(renderKeyword("fun")).append(" ");
-            renderTypeParameters(descriptor.getTypeParameters(), builder);
+            if (renderTypeParameters(descriptor.getTypeParameters(), builder)) {
+                builder.append(" ");
+            }
 
             ReceiverDescriptor receiver = descriptor.getReceiverParameter();
             if (receiver.exists()) {
@@ -263,7 +285,7 @@ public class DescriptorRenderer implements Renderer<DeclarationDescriptor> {
             return null;
         }
 
-        private void renderTypeParameters(List<TypeParameterDescriptor> typeParameters, StringBuilder builder) {
+        private boolean renderTypeParameters(List<TypeParameterDescriptor> typeParameters, StringBuilder builder) {
             if (!typeParameters.isEmpty()) {
                 builder.append(lt());
                 for (Iterator<TypeParameterDescriptor> iterator = typeParameters.iterator(); iterator.hasNext(); ) {
@@ -274,7 +296,9 @@ public class DescriptorRenderer implements Renderer<DeclarationDescriptor> {
                     }
                 }
                 builder.append(">");
+                return true;
             }
+            return false;
         }
 
         @Override
