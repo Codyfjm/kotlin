@@ -98,19 +98,32 @@ public class DescriptorRenderer implements Renderer<DeclarationDescriptor> {
                     result.append(".");
                 }
                 result.append("(");
-                List<JetType> parameterTypes = JetStandardClasses.getParameterTypesFromFunctionType(type);
-                for (int i = 0; i < parameterTypes.size(); i++) {
-                    if (i != 0) {
-                        result.append(", ");
-                    }
-                    result.append(renderType(parameterTypes.get(i)));
-                }
+                appendTypes(result, JetStandardClasses.getParameterTypesFromFunctionType(type));
                 result.append(")-> ");
                 result.append(renderType(JetStandardClasses.getReturnTypeFromFunctionType(type)));
 
                 return result.toString();
+            } else if (JetStandardClasses.isTupleType(type)) {
+                if (JetStandardClasses.isUnit(type)) {
+                    return "Unit";
+                } else {
+                    StringBuilder result = new StringBuilder("#(");
+                    appendTypes(result, JetStandardClasses.getTupleElementTypes(type));
+                    result.append(")");
+
+                    return result.toString();
+                }
             }
             return escape(type.toString());
+        }
+    }
+
+    private void appendTypes(StringBuilder result, List<JetType> types) {
+        for (Iterator<JetType> iterator = types.iterator(); iterator.hasNext(); ) {
+            result.append(renderType(iterator.next()));
+            if (iterator.hasNext()) {
+                result.append(", ");
+            }
         }
     }
 

@@ -346,6 +346,15 @@ public class JetStandardClasses {
         return TUPLE_CONSTRUCTORS.contains(type.getConstructor());
     }
 
+    public static List<JetType> getTupleElementTypes(@NotNull JetType type) {
+        assert isTupleType(type);
+        List<JetType> result = Lists.newArrayList();
+        for (TypeProjection typeProjection : type.getArguments()) {
+            result.add(typeProjection.getType());
+        }
+        return result;
+    }
+
     public static JetType getLabeledTupleType(List<AnnotationDescriptor> annotations, List<ValueParameterDescriptor> arguments) {
         // TODO
         return getTupleType(annotations, toTypes(arguments));
