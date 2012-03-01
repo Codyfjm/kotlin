@@ -26,6 +26,7 @@ import org.jetbrains.jet.lexer.JetTokens;
 
     private final Stack<State> states = new Stack<State>();
     private int lBraceCount;
+    private String heredoc;
 
     private void pushState(int state) {
         states.push(new State(yystate(), lBraceCount));
@@ -45,7 +46,7 @@ import org.jetbrains.jet.lexer.JetTokens;
 %eof{  return;
 %eof}
 
-%xstate STRING RAW_STRING SHORT_TEMPLATE_ENTRY
+%xstate STRING RAW_STRING SHORT_TEMPLATE_ENTRY HEREDOC HEREDOC_TEMPLATE
 %state LONG_TEMPLATE_ENTRY
 
 DIGIT=[0-9]
@@ -89,7 +90,7 @@ BINARY_EXPONENT=[Pp][+-]?{DIGIT}+
 HEX_SIGNIFICAND={HEX_INTEGER_LITERAL}|0[Xx]{HEX_DIGIT}*\.{HEX_DIGIT}+
 //HEX_SIGNIFICAND={HEX_INTEGER_LITERAL}|{HEX_INTEGER_LITERAL}\.|0[Xx]{HEX_DIGIT}*\.{HEX_DIGIT}+
 
-CHARACTER_LITERAL="'"([^\\\'\n]|{ESCAPE_SEQUENCE})*("'"|\\)?
+CHARACTER_LITERAL="'"([^\\\'\n]|{ESCAPE_SEQUENCE})(\')
 // TODO: introduce symbols (e.g. 'foo) as another way to write string literals
 STRING_LITERAL=\"([^\\\"\n]|{ESCAPE_SEQUENCE})*(\"|\\)?
 ESCAPE_SEQUENCE=\\(u{HEX_DIGIT}{HEX_DIGIT}{HEX_DIGIT}{HEX_DIGIT}|[^\n])
@@ -98,43 +99,106 @@ ESCAPE_SEQUENCE=\\(u{HEX_DIGIT}{HEX_DIGIT}{HEX_DIGIT}{HEX_DIGIT}|[^\n])
 THREE_QUO = (\"\"\")
 ONE_TWO_QUO = (\"[^\"]) | (\"\"[^\"])
 QUO_STRING_CHAR = [^\"] | {ONE_TWO_QUO}
-RAW_STRING_LITERAL = {THREE_QUO} {QUO_STRING_CHAR}* {THREE_QUO}?
 
 REGULAR_STRING_PART=[^\\\"\n\$]+
 SHORT_TEMPLATE_ENTRY=\${IDENTIFIER}
 LONELY_DOLLAR=\$
 LONG_TEMPLATE_ENTRY_START=\$\{
 LONG_TEMPLATE_ENTRY_END=\}
-
+HEREDOC_DELIMITER=[^\ \t\f\r\n]*([\ \t\f\r]*\n)
 %%
+
+// HEREDOCS
+
+(\#\'){HEREDOC_DELIMITER}
+            {
+                this.heredoc = "'"+yytext().toString().substring(2).trim();
+                yybegin(HEREDOC);
+                return JetTokens.OPEN_QUOTE;
+            }
+
+<HEREDOC>[^\n]*\n
+            {
+                String text = yytext().toString();
+                int delimiterPos = text.indexOf(this.heredoc);
+                if ( delimiterPos > 0 ) {
+                    yypushback(text.length() - delimiterPos);
+                } else if ( delimiterPos == 0 ) {
+                    // Don't consume any of the trailing tokens.
+                    yypushback(text.length() - this.heredoc.length());
+                    yybegin(YYINITIAL);
+                    this.heredoc = null;
+                    return JetTokens.CLOSING_QUOTE;
+                }
+                return JetTokens.REGULAR_STRING_PART;
+            }
+
+(\#\"){HEREDOC_DELIMITER}
+            {
+                this.heredoc = "\""+yytext().toString().substring(2).trim();
+                pushState(HEREDOC_TEMPLATE);
+                return JetTokens.OPEN_QUOTE;
+            }
+
+<HEREDOC_TEMPLATE>[^\n]*\n
+            {
+                String text = yytext().toString();
+                int delimiterPos = text.indexOf(this.heredoc);
+                int templatePos = text.indexOf("${");
+                if( templatePos == 0 ) {
+                    yypushback(text.length() - 2);
+                    pushState(LONG_TEMPLATE_ENTRY);
+                    return JetTokens.LONG_TEMPLATE_ENTRY_START;
+                } else {
+                    if( templatePos > 0 && ( delimiterPos<0  || templatePos<delimiterPos) ) {
+                        yypushback(text.length() - templatePos);
+                        return JetTokens.REGULAR_STRING_PART;
+                    }
+                    if ( delimiterPos > 0 ) {
+                        yypushback(text.length() - delimiterPos);
+                    } else if ( delimiterPos == 0 ) {
+                        // Don't consume any of the trailing tokens.
+                        yypushback(text.length() - this.heredoc.length());
+                        yybegin(YYINITIAL);
+                        this.heredoc = null;
+                        return JetTokens.CLOSING_QUOTE;
+                    }
+                    return JetTokens.REGULAR_STRING_PART;
+                }
+
+            }
+
+// Match CHARACTER_LITERAL first before raw strings
+{CHARACTER_LITERAL} { return JetTokens.CHARACTER_LITERAL; }
 
 // String templates
 
-{THREE_QUO}                      { pushState(RAW_STRING); return JetTokens.OPEN_QUOTE; }
+\'                               { pushState(RAW_STRING); return JetTokens.OPEN_QUOTE; }
 <RAW_STRING> \n                  { return JetTokens.REGULAR_STRING_PART; }
-<RAW_STRING> \"                  { return JetTokens.REGULAR_STRING_PART; }
+<RAW_STRING> ([^\\\'\n])+        { return JetTokens.REGULAR_STRING_PART; }
+<RAW_STRING> \\\'                { return JetTokens.ESCAPE_SEQUENCE; }
 <RAW_STRING> \\                  { return JetTokens.REGULAR_STRING_PART; }
-<RAW_STRING> {THREE_QUO}         { popState(); return JetTokens.CLOSING_QUOTE; }
+<RAW_STRING> \'                  { popState(); return JetTokens.CLOSING_QUOTE; }
 
 \"                          { pushState(STRING); return JetTokens.OPEN_QUOTE; }
 <STRING> \n                 { popState(); yypushback(1); return JetTokens.DANGLING_NEWLINE; }
 <STRING> \"                 { popState(); return JetTokens.CLOSING_QUOTE; }
 <STRING> {ESCAPE_SEQUENCE}  { return JetTokens.ESCAPE_SEQUENCE; }
 
-<STRING, RAW_STRING> {REGULAR_STRING_PART}         { return JetTokens.REGULAR_STRING_PART; }
-<STRING, RAW_STRING> {SHORT_TEMPLATE_ENTRY}        {
-                                                        pushState(SHORT_TEMPLATE_ENTRY);
-                                                        yypushback(yylength() - 1);
-                                                        return JetTokens.SHORT_TEMPLATE_ENTRY_START;
-                                                   }
+<STRING> {REGULAR_STRING_PART}         { return JetTokens.REGULAR_STRING_PART; }
+<STRING> {SHORT_TEMPLATE_ENTRY}        {
+                                            pushState(SHORT_TEMPLATE_ENTRY);
+                                            yypushback(yylength() - 1);
+                                            return JetTokens.SHORT_TEMPLATE_ENTRY_START;
+                                       }
 // Only *this* keyword is itself an expression valid in this position
 // *null*, *true* and *false* are also keywords and expression, but it does not make sense to put them
 // in a string template for it'd be easier to just type them in without a dollar
 <SHORT_TEMPLATE_ENTRY> "this"          { popState(); return JetTokens.THIS_KEYWORD; }
 <SHORT_TEMPLATE_ENTRY> {IDENTIFIER}    { popState(); return JetTokens.IDENTIFIER; }
 
-<STRING, RAW_STRING> {LONELY_DOLLAR}               { return JetTokens.REGULAR_STRING_PART; }
-<STRING, RAW_STRING> {LONG_TEMPLATE_ENTRY_START}   { pushState(LONG_TEMPLATE_ENTRY); return JetTokens.LONG_TEMPLATE_ENTRY_START; }
+<STRING> {LONELY_DOLLAR}               { return JetTokens.REGULAR_STRING_PART; }
+<STRING> {LONG_TEMPLATE_ENTRY_START}   { pushState(LONG_TEMPLATE_ENTRY); return JetTokens.LONG_TEMPLATE_ENTRY_START; }
 
 <LONG_TEMPLATE_ENTRY> "{"              { lBraceCount++; return JetTokens.LBRACE; }
 <LONG_TEMPLATE_ENTRY> "}"              {
@@ -161,7 +225,6 @@ LONG_TEMPLATE_ENTRY_END=\}
 {DOUBLE_LITERAL}     { return JetTokens.FLOAT_LITERAL; }
 {HEX_DOUBLE_LITERAL} { return JetTokens.FLOAT_LITERAL; }
 
-{CHARACTER_LITERAL} { return JetTokens.CHARACTER_LITERAL; }
 //{STRING_LITERAL} { return JetTokens.STRING_LITERAL; }
 
 "continue"   { return JetTokens.CONTINUE_KEYWORD ;}
