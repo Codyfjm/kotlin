@@ -17,6 +17,7 @@
 package org.jetbrains.jet.lang.resolve;
 
 import com.google.common.collect.Lists;
+import com.google.common.collect.Sets;
 import com.intellij.psi.PsiElement;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -36,9 +37,7 @@ import org.jetbrains.jet.lang.types.JetType;
 import org.jetbrains.jet.lang.types.expressions.ExpressionTypingServices;
 
 import javax.inject.Inject;
-import java.util.Collections;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 import static org.jetbrains.jet.lang.types.TypeUtils.NO_EXPECTED_TYPE;
 
@@ -68,38 +67,73 @@ public class AnnotationResolver {
     }
 
     public void process() {
+        final BindingTrace trace = context.getTrace();
+
+        HashSet<Class<?>> classLevelSkips = new HashSet<Class<?>>();
+        classLevelSkips.add(JetDeclarationWithBody.class);
+        classLevelSkips.add(JetProperty.class);
+
+        for (Map.Entry<JetClass, MutableClassDescriptor> entry : this.context.getClasses().entrySet()) {
+            JetClass declaration = entry.getKey();
+            MutableClassDescriptor descriptor = entry.getValue();
+            resolveAnnotationExpressions(trace, declaration, descriptor.getScopeForInitializers(), classLevelSkips);
+        }
+
+        for (Map.Entry<JetObjectDeclaration, MutableClassDescriptor> entry : this.context.getObjects().entrySet()) {
+            JetObjectDeclaration declaration = entry.getKey();
+            MutableClassDescriptor descriptor = entry.getValue();
+            resolveAnnotationExpressions(trace, declaration, descriptor.getScopeForInitializers(), classLevelSkips);
+        }
+
+        for (JetProperty declaration : this.context.getProperties().keySet()) {
+            JetScope declaringScope = this.context.getDeclaringScopes().get(declaration);
+            assert declaringScope != null;
+            JetExpression expression = declaration.getInitializer();
+            if(expression!=null) {
+                resolveAnnotationExpressions(trace, expression, declaringScope, new HashSet<Class<?>>());
+            }
+        }
+
         for (Map.Entry<JetNamedFunction, SimpleFunctionDescriptor> entry : this.context.getFunctions().entrySet()) {
             JetNamedFunction declaration = entry.getKey();
             SimpleFunctionDescriptor descriptor = entry.getValue();
-
             JetScope declaringScope = this.context.getDeclaringScopes().get(declaration);
             assert declaringScope != null;
-            resolveFunctionBodyAnnotations(context.getTrace(), declaration, descriptor, declaringScope);
+
+            for (JetParameter param : declaration.getValueParameters()) {
+                JetExpression expression = param.getDefaultValue();
+                if(expression!=null) {
+                    resolveAnnotationExpressions(trace, expression, declaringScope, new HashSet<Class<?>>());
+                }
+            }
+
+            JetExpression expression = declaration.getBodyExpression();
+            if(expression!=null) {
+                final JetScope innerScope = FunctionDescriptorUtil.getFunctionInnerScope(declaringScope, descriptor, trace);
+                resolveAnnotationExpressions(trace, expression, innerScope, new HashSet<Class<?>>());
+            }
         }
     }
 
-    private void resolveFunctionBodyAnnotations(
-            @NotNull final BindingTrace trace,
-            @NotNull JetDeclarationWithBody function,
-            @NotNull FunctionDescriptor functionDescriptor,
-            @NotNull JetScope declaringScope) {
+    private void resolveAnnotationExpressions(@NotNull final BindingTrace trace, @NotNull JetExpression expression, @NotNull final JetScope scope, @NotNull  final HashSet<Class<?>> skip) {
+        expression.accept(new JetVisitorVoid() {
+            @Override
+            public void visitElement(PsiElement element) {
+                for (Class<?> aClass : skip) {
+                    if(aClass.isAssignableFrom(element.getClass()) ) {
+                        return;
+                    }
+                }
+                element.acceptChildren(this);
+            }
+            @Override
+            public void visitAnnotatedExpression(JetAnnotatedExpression expression) {
+                List<AnnotationDescriptor> resolved = resolveAnnotations(scope, expression.getAttributes(), trace);
 
-        JetExpression bodyExpression = function.getBodyExpression();
-        if(bodyExpression!=null) {
-            final JetScope functionInnerScope = FunctionDescriptorUtil.getFunctionInnerScope(declaringScope, functionDescriptor, trace);
-            bodyExpression.accept(new JetVisitorVoid() {
-                @Override
-                public void visitElement(PsiElement element) {
-                    element.acceptChildren(this);
-                }
-                @Override
-                public void visitAnnotatedExpression(JetAnnotatedExpression expression) {
-                    List<AnnotationDescriptor> resolved = resolveAnnotations(functionInnerScope, expression.getAttributes(), trace);
-                    trace.record(BindingContext.ANNOTATION_EXPRESSION, expression, resolved);
-                    super.visitAnnotatedExpression(expression);
-                }
-            });
-        }
+                trace.record(BindingContext.ANNOTATION_EXPRESSION, expression, resolved);
+                super.visitAnnotatedExpression(expression);
+            }
+        });
     }
 
 
