@@ -26,6 +26,7 @@ import org.jetbrains.jet.codegen.intrinsics.IntrinsicMethod;
 import org.jetbrains.jet.codegen.intrinsics.IntrinsicMethods;
 import org.jetbrains.jet.codegen.signature.JvmPropertyAccessorSignature;
 import org.jetbrains.jet.lang.descriptors.*;
+import org.jetbrains.jet.lang.descriptors.annotations.AnnotationDescriptor;
 import org.jetbrains.jet.lang.diagnostics.DiagnosticUtils;
 import org.jetbrains.jet.lang.psi.*;
 import org.jetbrains.jet.lang.resolve.BindingContext;
@@ -74,6 +75,7 @@ public class ExpressionCodegen extends JetVisitor<StackValue, StackValue> {
     private final IntrinsicMethods intrinsics;
 
     private final Stack<BlockStackElement> blockStackElements = new Stack<BlockStackElement>();
+    private final Stack<JetAnnotatedExpression> expressionAnnotations = new Stack<JetAnnotatedExpression>();
 
     static class BlockStackElement {
     }
@@ -200,7 +202,31 @@ public class ExpressionCodegen extends JetVisitor<StackValue, StackValue> {
 
     @Override
     public StackValue visitAnnotatedExpression(JetAnnotatedExpression expression, StackValue receiver) {
-        return genQualified(receiver, expression.getBaseExpression());
+        expressionAnnotations.push(expression);
+        try {
+            return genQualified(receiver, expression.getBaseExpression());
+        } finally {
+            expressionAnnotations.pop();
+        }
+    }
+
+    public AnnotationDescriptor getAnnotationDescriptor(String annotationType) {
+        if( !expressionAnnotations.isEmpty() ) {
+            for(int i=expressionAnnotations.size()-1; i >=0; i--) {
+                JetAnnotatedExpression annotatedExpression = expressionAnnotations.get(i);
+                List<AnnotationDescriptor> descriptors = bindingContext.get(BindingContext.ANNOTATION_EXPRESSION, annotatedExpression);
+                if(descriptors!=null) {
+                    for( AnnotationDescriptor descriptor : descriptors ) {
+                        if( isClass(descriptor.getType(), annotationType) ) {
+                            return descriptor;
+                        }
+                    }
+                } else {
+                    System.out.println("Annotation expression not yet resolved");
+                }
+            }
+        }
+        return null;
     }
 
     private static boolean isEmptyExpression(JetElement expr) {
@@ -1915,6 +1941,9 @@ public class ExpressionCodegen extends JetVisitor<StackValue, StackValue> {
                className.equals("Double");
     }
 
+    private static boolean isClass(JetType type, String name) {
+        return isClass(type.getConstructor().getDeclarationDescriptor(), name);
+    }
     private static boolean isClass(DeclarationDescriptor descriptor, String name) {
         if (!(descriptor instanceof ClassDescriptor)) {
             return false;
