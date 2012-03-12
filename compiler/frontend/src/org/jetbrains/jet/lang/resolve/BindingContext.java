@@ -32,6 +32,7 @@ import org.jetbrains.jet.util.Box;
 import org.jetbrains.jet.util.slicedmap.*;
 
 import java.util.Collection;
+import java.util.List;
 import java.util.Set;
 
 import static org.jetbrains.jet.util.slicedmap.RewritePolicy.DO_NOTHING;
@@ -40,6 +41,7 @@ import static org.jetbrains.jet.util.slicedmap.RewritePolicy.DO_NOTHING;
  * @author abreslav
  */
 public interface BindingContext {
+    WritableSlice<JetAnnotatedExpression, List<AnnotationDescriptor>> ANNOTATION_EXPRESSION = Slices.createSimpleSlice();
     WritableSlice<JetAnnotationEntry, AnnotationDescriptor> ANNOTATION = Slices.createSimpleSlice();
 
     WritableSlice<JetExpression, CompileTimeConstant<?>> COMPILE_TIME_VALUE = Slices.createSimpleSlice();

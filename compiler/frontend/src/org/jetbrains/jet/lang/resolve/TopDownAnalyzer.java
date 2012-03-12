@@ -52,7 +52,8 @@ public class TopDownAnalyzer {
     private OverrideResolver overrideResolver;
     @NotNull
     private OverloadResolver overloadResolver;
-
+    @NotNull
+    private AnnotationResolver annotationResolver;
 
     @Inject
     public void setDeclarationResolver(@NotNull DeclarationResolver declarationResolver) {
@@ -79,6 +80,10 @@ public class TopDownAnalyzer {
         this.overloadResolver = overloadResolver;
     }
 
+    @Inject
+    public void setAnnotationResolver(@NotNull AnnotationResolver annotationResolver) {
+        this.annotationResolver = annotationResolver;
+    }
 
 
     public static void process(
@@ -119,6 +124,7 @@ public class TopDownAnalyzer {
         declarationResolver.process();
         delegationResolver.process();
         overrideResolver.process();
+        annotationResolver.process();
 
         lockScopes(context);
 

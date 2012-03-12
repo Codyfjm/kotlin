@@ -17,10 +17,10 @@
 package org.jetbrains.jet.lang.resolve;
 
 import com.google.common.collect.Lists;
+import com.intellij.psi.PsiElement;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
-import org.jetbrains.jet.lang.descriptors.FunctionDescriptor;
-import org.jetbrains.jet.lang.descriptors.ValueParameterDescriptor;
+import org.jetbrains.jet.lang.descriptors.*;
 import org.jetbrains.jet.lang.descriptors.annotations.AnnotationDescriptor;
 import org.jetbrains.jet.lang.psi.*;
 import org.jetbrains.jet.lang.resolve.calls.CallMaker;
@@ -49,6 +49,8 @@ public class AnnotationResolver {
 
     private ExpressionTypingServices expressionTypingServices;
     private CallResolver callResolver;
+    @NotNull
+    private TopDownAnalysisContext context;
 
     @Inject
     public void setExpressionTypingServices(ExpressionTypingServices expressionTypingServices) {
@@ -59,6 +61,47 @@ public class AnnotationResolver {
     public void setCallResolver(CallResolver callResolver) {
         this.callResolver = callResolver;
     }
+
+    @com.google.inject.Inject
+    public void setContext(@NotNull TopDownAnalysisContext context) {
+        this.context = context;
+    }
+
+    public void process() {
+        for (Map.Entry<JetNamedFunction, SimpleFunctionDescriptor> entry : this.context.getFunctions().entrySet()) {
+            JetNamedFunction declaration = entry.getKey();
+            SimpleFunctionDescriptor descriptor = entry.getValue();
+
+            JetScope declaringScope = this.context.getDeclaringScopes().get(declaration);
+            assert declaringScope != null;
+            resolveFunctionBodyAnnotations(context.getTrace(), declaration, descriptor, declaringScope);
+        }
+    }
+
+    private void resolveFunctionBodyAnnotations(
+            @NotNull final BindingTrace trace,
+            @NotNull JetDeclarationWithBody function,
+            @NotNull FunctionDescriptor functionDescriptor,
+            @NotNull JetScope declaringScope) {
+
+        JetExpression bodyExpression = function.getBodyExpression();
+        if(bodyExpression!=null) {
+            final JetScope functionInnerScope = FunctionDescriptorUtil.getFunctionInnerScope(declaringScope, functionDescriptor, trace);
+            bodyExpression.accept(new JetVisitorVoid() {
+                @Override
+                public void visitElement(PsiElement element) {
+                    element.acceptChildren(this);
+                }
+                @Override
+                public void visitAnnotatedExpression(JetAnnotatedExpression expression) {
+                    List<AnnotationDescriptor> resolved = resolveAnnotations(functionInnerScope, expression.getAttributes(), trace);
+                    trace.record(BindingContext.ANNOTATION_EXPRESSION, expression, resolved);
+                    super.visitAnnotatedExpression(expression);
+                }
+            });
+        }
+    }
+
 
     @NotNull
     public List<AnnotationDescriptor> resolveAnnotations(@NotNull JetScope scope, @Nullable JetModifierList modifierList, BindingTrace trace) {
